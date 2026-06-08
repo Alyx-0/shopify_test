@@ -2,68 +2,60 @@ from fastapi import FastAPI, Request
 import os
 import json
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 app = FastAPI()
 
 # Configuration
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 SHEET_NAME = os.environ.get("SHEET_NAME", "TestEZImport")
 
-print(f"🔍 DEBUG: SPREADSHEET_ID = {SPREADSHEET_ID[:10] if SPREADSHEET_ID else 'NOT SET'}...")
-print(f"🔍 DEBUG: SHEET_NAME = {SHEET_NAME}")
-print(f"🔍 DEBUG: GOOGLE_CREDENTIALS = {'SET' if os.environ.get('GOOGLE_CREDENTIALS') else 'NOT SET'}")
-
-executor = ThreadPoolExecutor(max_workers=1)
-
 def get_google_sheets_client():
     """Authenticate and return Google Sheets client"""
-    print("🔍 DEBUG: get_google_sheets_client() STARTED")
-    
+    print("🔍 Getting Google credentials...")
     creds_json = os.environ.get("GOOGLE_CREDENTIALS")
-    print(f"🔍 DEBUG: creds_json exists: {bool(creds_json)}")
     
     if not creds_json:
-        raise Exception("GOOGLE_CREDENTIALS environment variable not set")
+        error_msg = "GOOGLE_CREDENTIALS environment variable not set!"
+        print(f"❌ {error_msg}")
+        raise Exception(error_msg)
     
-    try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        
-        print("🔍 DEBUG: Parsing JSON...")
-        creds_dict = json.loads(creds_json)
-        print(f"🔍 DEBUG: JSON parsed, client_email = {creds_dict.get('client_email', 'NOT FOUND')}")
-        
-        print("🔍 DEBUG: Creating credentials...")
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict,
-            scopes=['https://www.googleapis.com/auth/spreadsheets']
-        )
-        
-        print("🔍 DEBUG: Building sheets client...")
-        client = build('sheets', 'v4', credentials=creds)
-        print("✅ DEBUG: Sheets client created successfully")
-        return client
-    except Exception as e:
-        print(f"❌ DEBUG: Error in get_google_sheets_client: {e}")
-        raise
+    print("🔍 Parsing credentials JSON...")
+    creds_dict = json.loads(creds_json)
+    print(f"✅ Using service account: {creds_dict.get('client_email')}")
+    
+    creds = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=['https://www.googleapis.com/auth/spreadsheets']
+    )
+    
+    print("🔍 Building Google Sheets client...")
+    return build('sheets', 'v4', credentials=creds)
 
-def append_to_sheets(order: dict):
-    """Append order data to Google Sheets"""
-    print(f"🔍 DEBUG: append_to_sheets() STARTED for order {order.get('name')}")
+@app.post("/webhook/orders/create")
+async def webhook(request: Request):
+    print("=" * 50)
+    print("📦 WEBHOOK RECEIVED")
     
+    # Parse order
     try:
-        print("🔍 DEBUG: Getting sheets client...")
+        order = await request.json()
+        print(f"✅ Order: {order.get('name')}")
+        print(f"   Customer: {order.get('customer', {}).get('email', 'N/A')}")
+        print(f"   Items: {len(order.get('line_items', []))}")
+    except Exception as e:
+        print(f"❌ Error parsing: {e}")
+        return {"error": "Invalid JSON"}, 400
+    
+    # Process Google Sheets DIRECTLY (not in background)
+    try:
+        print("🔍 Getting sheets client...")
         sheets_client = get_google_sheets_client()
+        print("✅ Sheets client ready")
         
-        print("🔍 DEBUG: Building rows...")
         rows = []
-        line_items = order.get('line_items', [])
-        print(f"🔍 DEBUG: Found {len(line_items)} line items")
-        
-        for idx, item in enumerate(line_items):
-            print(f"🔍 DEBUG: Processing item {idx}: {item.get('title')}")
+        for item in order.get('line_items', []):
             row = [
                 order.get('name', ''),
                 order.get('customer', {}).get('email', ''),
@@ -73,11 +65,13 @@ def append_to_sheets(order: dict):
                 datetime.now().isoformat()
             ]
             rows.append(row)
-        
-        print(f"🔍 DEBUG: {len(rows)} rows built")
+            print(f"   Added row for: {item.get('title')}")
         
         if rows:
-            print(f"🔍 DEBUG: Calling Google Sheets API...")
+            print(f"🔍 Appending {len(rows)} rows to Google Sheets...")
+            print(f"   Sheet: {SHEET_NAME}")
+            print(f"   Spreadsheet ID: {SPREADSHEET_ID[:10]}...")
+            
             body = {'values': rows}
             result = sheets_client.spreadsheets().values().append(
                 spreadsheetId=SPREADSHEET_ID,
@@ -85,46 +79,19 @@ def append_to_sheets(order: dict):
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
-            print(f"✅ DEBUG: SUCCESS! Appended {len(rows)} rows")
-            print(f"✅ DEBUG: Response: {result}")
+            
+            print(f"✅ SUCCESS! Appended {len(rows)} rows")
+            print(f"   Updated range: {result.get('updates', {}).get('updatedRange')}")
         else:
-            print("⚠️ DEBUG: No rows to append")
+            print("⚠️ No line items found in order")
             
     except Exception as e:
-        print(f"❌ DEBUG: Error in append_to_sheets: {e}")
+        print(f"❌ ERROR: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
-
-def process_in_background(order: dict):
-    """Background processing"""
-    print(f"🔍 DEBUG: process_in_background() STARTED for {order.get('name')}")
-    try:
-        append_to_sheets(order)
-        print(f"✅ DEBUG: process_in_background() COMPLETED for {order.get('name')}")
-    except Exception as e:
-        print(f"❌ DEBUG: process_in_background() FAILED: {e}")
-
-@app.post("/webhook/orders/create")
-async def webhook(request: Request):
-    print("🔍 DEBUG: webhook() CALLED")
+        return {"error": str(e)}, 500
     
-    try:
-        body = await request.body()
-        print(f"🔍 DEBUG: Body received, length: {len(body)}")
-        
-        order = await request.json()
-        print(f"✅ DEBUG: Received order: {order.get('name')}")
-        print(f"🔍 DEBUG: Order keys: {list(order.keys())}")
-        print(f"🔍 DEBUG: line_items count: {len(order.get('line_items', []))}")
-        
-    except Exception as e:
-        print(f"❌ DEBUG: Error parsing order: {e}")
-        return {"error": "Invalid JSON"}, 400
-    
-    print("🔍 DEBUG: Submitting to background thread...")
-    executor.submit(process_in_background, order)
-    print("🔍 DEBUG: Background task submitted")
-    
+    print("=" * 50)
     return {"status": "ok"}
 
 @app.get("/health")
