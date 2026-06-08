@@ -1,7 +1,26 @@
+# Secrets (never commit these!)
+*.json
+probable-sprite-*.json
+service-account-*.json
+
+# Development files
+dev.js
+main.js
+backup.js
+*.dev.js
+
+# Python
 venv/
 __pycache__/
 *.pyc
-.DS_Store
+
+# Environment variables
 .env
-*.json
-!vercel.json
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
