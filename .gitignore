@@ -1,26 +1,11 @@
-# Secrets (never commit these!)
-*.json
-probable-sprite-*.json
-service-account-*.json
-
-# Development files
-dev.js
-main.js
-backup.js
-*.dev.js
-
-# Python
 venv/
 __pycache__/
 *.pyc
-
-# Environment variables
-.env
-.env.local
-
-# IDE
-.vscode/
-.idea/
-
-# OS
 .DS_Store
+.env
+dev.js
+backup.js
+main.js
+script.py
+flow.py
+probable-sprite-498507-i8-eff401ef074e.json
